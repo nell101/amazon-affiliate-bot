@@ -62,6 +62,9 @@ class AmazonAffiliateBlogBot:
         self.client_id = os.getenv('GOOGLE_CLIENT_ID', 'your_client_id')
         self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET', 'your_client_secret')
         
+        # Initialize posted products tracking set - THIS WAS MISSING!
+        self.posted_products = set()
+        
         # High-converting product categories and keywords
         self.trending_categories = [
             "electronics", "home-kitchen", "fashion", "beauty", "sports-outdoors",
