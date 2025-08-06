@@ -76,8 +76,55 @@ class AmazonAffiliateBlogBot:
             "multi-purpose", "heavy-duty", "eco-friendly", "energy efficient"
         ]
         
-        # Track posted products to avoid duplicates
-        self.posted_products = set()
+    def diagnose_authentication(self):
+        """Diagnose authentication issues"""
+        logger.info("🔍 Diagnosing authentication setup...")
+        
+        # Check environment variables
+        logger.info(f"GOOGLE_OAUTH_TOKEN present: {'✅' if self.refresh_token else '❌'}")
+        logger.info(f"GOOGLE_CLIENT_ID present: {'✅' if self.client_id != 'your_client_id' else '❌'}")
+        logger.info(f"GOOGLE_CLIENT_SECRET present: {'✅' if self.client_secret != 'your_client_secret' else '❌'}")
+        
+        if self.refresh_token:
+            logger.info(f"Token starts with: {self.refresh_token[:10]}...")
+            logger.info(f"Token length: {len(self.refresh_token)}")
+            
+            # Test token format
+            if self.refresh_token.startswith('ya29.'):
+                logger.info("✅ Token has correct ya29. prefix")
+            elif self.refresh_token.startswith('1//'):
+                logger.info("ℹ️ Token appears to be refresh token format")
+            else:
+                logger.warning("⚠️ Unusual token format detected")
+        
+        return True
+
+    def test_blogger_access(self):
+        """Test if we can access Blogger API"""
+        try:
+            access_token = self.get_access_token()
+            if not access_token:
+                logger.error("❌ No access token available for testing")
+                return False
+            
+            headers = {'Authorization': f'Bearer {access_token}'}
+            
+            # Test with blog info endpoint (read-only)
+            url = f"https://www.googleapis.com/blogger/v3/blogs/{self.blogger_id}"
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                blog_data = response.json()
+                logger.info(f"✅ Blogger API access confirmed for: {blog_data.get('name', 'Unknown Blog')}")
+                return True
+            else:
+                logger.error(f"❌ Blogger API test failed: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Blogger API test error: {e}")
+            return False
         
     def get_access_token(self):
         """Get valid access token, refresh if needed"""
@@ -88,42 +135,79 @@ class AmazonAffiliateBlogBot:
             if self.access_token and current_time < (self.token_expires_at - 300):
                 return self.access_token
             
-            logger.info("Refreshing access token...")
+            logger.info("🔄 Refreshing access token...")
             
-            # Proper OAuth token refresh
-            if self.refresh_token and self.client_id != 'your_client_id':
-                headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-                data = {
-                    'client_id': self.client_id,
-                    'client_secret': self.client_secret,
-                    'refresh_token': self.refresh_token,
-                    'grant_type': 'refresh_token'
-                }
+            # Try proper OAuth token refresh first
+            if (self.refresh_token and 
+                self.client_id and self.client_id != 'your_client_id' and 
+                self.client_secret and self.client_secret != 'your_client_secret'):
                 
-                response = requests.post('https://oauth2.googleapis.com/token', 
-                                       headers=headers, data=data)
-                
-                if response.status_code == 200:
-                    token_data = response.json()
-                    self.access_token = token_data['access_token']
-                    expires_in = token_data.get('expires_in', 3600)
-                    self.token_expires_at = current_time + expires_in
-                    logger.info("Access token refreshed successfully")
-                    return self.access_token
-                else:
-                    logger.error(f"Token refresh failed: {response.status_code}")
-                    logger.error(response.text)
+                try:
+                    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+                    data = {
+                        'client_id': self.client_id,
+                        'client_secret': self.client_secret,
+                        'refresh_token': self.refresh_token,
+                        'grant_type': 'refresh_token'
+                    }
+                    
+                    response = requests.post('https://oauth2.googleapis.com/token', 
+                                           headers=headers, data=data, timeout=10)
+                    
+                    if response.status_code == 200:
+                        token_data = response.json()
+                        self.access_token = token_data['access_token']
+                        expires_in = token_data.get('expires_in', 3600)
+                        self.token_expires_at = current_time + expires_in
+                        logger.info("✅ Access token refreshed successfully via OAuth")
+                        return self.access_token
+                    else:
+                        logger.warning(f"⚠️ OAuth refresh failed: {response.status_code}")
+                except Exception as e:
+                    logger.warning(f"⚠️ OAuth refresh error: {e}")
             
-            # Fallback: use refresh token directly (for demo purposes)
-            logger.warning("Using refresh token as access token (fallback method)")
-            self.access_token = self.refresh_token
-            self.token_expires_at = current_time + 3600
-            return self.access_token
+            # Fallback methods for token handling
+            if self.refresh_token:
+                # Method 1: Direct token validation
+                test_headers = {'Authorization': f'Bearer {self.refresh_token}'}
+                test_url = f"https://www.googleapis.com/blogger/v3/blogs/{self.blogger_id}"
+                
+                try:
+                    test_response = requests.get(test_url, headers=test_headers, timeout=10)
+                    if test_response.status_code == 200:
+                        logger.info("✅ Using refresh token as access token (validated)")
+                        self.access_token = self.refresh_token
+                        self.token_expires_at = current_time + 3600
+                        return self.access_token
+                except Exception as e:
+                    logger.warning(f"⚠️ Token validation failed: {e}")
+                
+                # Method 2: Try with 'ya29.' prefix if token doesn't have it
+                if not self.refresh_token.startswith('ya29.'):
+                    prefixed_token = f"ya29.{self.refresh_token}"
+                    test_headers = {'Authorization': f'Bearer {prefixed_token}'}
+                    try:
+                        test_response = requests.get(test_url, headers=test_headers, timeout=10)
+                        if test_response.status_code == 200:
+                            logger.info("✅ Using prefixed token (validated)")
+                            self.access_token = prefixed_token
+                            self.token_expires_at = current_time + 3600
+                            return self.access_token
+                    except Exception as e:
+                        logger.warning(f"⚠️ Prefixed token validation failed: {e}")
+                
+                # Method 3: Last resort - use as-is
+                logger.warning("⚠️ Using refresh token directly without validation")
+                self.access_token = self.refresh_token
+                self.token_expires_at = current_time + 3600
+                return self.access_token
+            
+            logger.error("❌ No valid authentication method available")
+            return None
             
         except Exception as e:
-            logger.error(f"Error refreshing access token: {e}")
-            # Last resort fallback
-            return self.refresh_token
+            logger.error(f"❌ Critical error in get_access_token: {e}")
+            return self.refresh_token if self.refresh_token else None
 
     def keep_alive(self):
         """Ping endpoint every 14 minutes to prevent Render sleep"""
@@ -216,39 +300,43 @@ class AmazonAffiliateBlogBot:
     def generate_seo_content(self, product):
         """Generate SEO-optimized content using Google Gemini"""
         try:
+            # Use the correct Gemini API endpoint
+            url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={self.gemini_api_key}"
+            
             headers = {
                 'Content-Type': 'application/json'
             }
             
-            prompt = f"""
-            Create a compelling, SEO-optimized Amazon affiliate product review for:
+            prompt = f"""Create a compelling Amazon affiliate product review for: {product['title']} (Price: {product['price']}, Rating: {product['rating']}/5, {product['reviews']} reviews).
+
+Write an SEO-optimized review including:
+1. Catchy title with power words
+2. Brief meta description (under 150 chars)
+3. Engaging intro highlighting product appeal
+4. Key features and benefits
+5. Pros and cons analysis
+6. Customer review summary
+7. Strong purchase call-to-action
+
+Keep it 600-800 words, natural and trustworthy tone.
+
+Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"""
             
-            Product: {product['title']}
-            Price: {product['price']}
-            Rating: {product['rating']}/5 ({product['reviews']} reviews)
-            
-            Requirements:
-            1. SEO-friendly title with power words
-            2. Meta description (150 chars max)
-            3. Engaging introduction
-            4. Key features section
-            5. Pros and cons
-            6. Customer feedback summary
-            7. Strong call-to-action
-            
-            Make it 600-800 words, natural tone, trustworthy.
-            
-            Return as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}
-            """
-            
-            data = {
-                'contents': [{
-                    'parts': [{'text': prompt}]
-                }]
+            payload = {
+                "contents": [{
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }],
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "topK": 40,
+                    "topP": 0.95,
+                    "maxOutputTokens": 2048
+                }
             }
             
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={self.gemini_api_key}"
-            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
             
             if response.status_code == 200:
                 result = response.json()
@@ -265,18 +353,20 @@ class AmazonAffiliateBlogBot:
                             logger.info("✅ AI content generated successfully")
                             return content_data
                     except json.JSONDecodeError:
-                        logger.warning("⚠️ Failed to parse AI JSON, using fallback")
+                        logger.warning("⚠️ Failed to parse AI JSON, using fallback with AI content")
                     
                     return self.create_fallback_content(product, content)
                 else:
-                    logger.warning("⚠️ No candidates in Gemini response")
+                    logger.warning("⚠️ No candidates in Gemini response, using fallback")
                     return self.create_fallback_content(product)
             else:
-                logger.error(f"❌ Gemini API error: {response.status_code}")
+                logger.error(f"❌ Gemini API error: {response.status_code} - {response.text}")
+                logger.info("📝 Using fallback content generation")
                 return self.create_fallback_content(product)
                 
         except Exception as e:
             logger.error(f"❌ Content generation error: {e}")
+            logger.info("📝 Using fallback content generation")
             return self.create_fallback_content(product)
 
     def create_fallback_content(self, product, ai_content=""):
@@ -521,12 +611,23 @@ class AmazonAffiliateBlogBot:
         """Main bot execution loop"""
         logger.info("🚀 Amazon Affiliate Bot starting...")
         logger.info(f"🎯 Target blog: {self.blogger_url}")
-        logger.info(f"🔑 OAuth token configured: {'✅' if self.refresh_token else '❌'}")
+        
+        # Run diagnostics
+        self.diagnose_authentication()
         
         if not self.refresh_token:
             logger.error("❌ GOOGLE_OAUTH_TOKEN environment variable not set!")
             logger.error("Please set your refresh token in Render environment variables")
             logger.error("The bot will continue but posting will fail without proper authentication")
+        else:
+            # Test Blogger access
+            logger.info("🧪 Testing Blogger API access...")
+            if self.test_blogger_access():
+                logger.info("✅ Authentication appears to be working correctly")
+            else:
+                logger.error("❌ Authentication test failed - please check your token")
+                logger.error("💡 Tip: Make sure you're using an ACCESS TOKEN, not a refresh token")
+                logger.error("💡 Access tokens start with 'ya29.' and are ~200+ characters long")
         
         # Start keep-alive thread
         keep_alive_thread = Thread(target=self.keep_alive, daemon=True)
