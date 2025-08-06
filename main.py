@@ -304,7 +304,7 @@ class AmazonAffiliateBlogBot:
         """Generate SEO-optimized content using Google Gemini"""
         try:
             # Use the correct Gemini API endpoint
-            url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={self.gemini_api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={self.gemini_api_key}"
             
             headers = {
                 'Content-Type': 'application/json'
