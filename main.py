@@ -516,6 +516,10 @@ Return ONLY valid JSON in this exact format. DO NOT include any other text or ma
                         if 'content' in candidate and 'parts' in candidate['content']:
                             content = candidate['content']['parts'][0]['text'].strip()
                             
+                            # New logic to handle markdown fences
+                            if content.startswith('```json'):
+                                content = content.strip('` \njson')
+                            
                             try:
                                 content_data = json.loads(content)
                                 if all(key in content_data for key in ["title", "meta_description", "intro", "features", "review_body", "pros_and_cons", "customer_feedback", "faq"]):
@@ -754,7 +758,7 @@ Return ONLY valid JSON in this exact format. DO NOT include any other text or ma
                     'labels': ['amazon', 'affiliate', 'review', 'deals', '2024', product['title'].split(' ')[-1].lower(), 'shopping']
                 }
                 
-                url = f"https://www.googleapis.com/blogger/v3/blogs/{self.blogger_id}/posts"
+                url = f"[https://www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){self.blogger_id}/posts"
                 logger.info(f"🔄 Posting to Blogger (attempt {attempt + 1}/{self.max_retries})...")
                 
                 response = requests.post(url, headers=headers, json=post_data, timeout=30)
