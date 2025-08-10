@@ -15,6 +15,7 @@ from flask import Flask
 import re
 import signal
 import sys
+import traceback
 
 # Health check server for Render
 app = Flask(__name__)
@@ -959,7 +960,6 @@ Return ONLY valid JSON in this exact format. DO NOT include any other text or ma
                 break
             except Exception as e:
                 logger.error(f"❌ Unexpected bot error: {e}")
-                import traceback
                 traceback.print_exc()
                 
                 consecutive_failures += 1
@@ -1007,8 +1007,7 @@ def main():
         logger.info("🛑 Application interrupted by user")
     except Exception as e:
         logger.error(f"❌ Fatal application error: {e}")
-        import traceback
-            traceback.print_exc()
+        traceback.print_exc()
     
     logger.info("🌐 Keeping health server alive for final requests...")
     try:
