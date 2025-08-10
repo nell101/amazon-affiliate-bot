@@ -1,5 +1,5 @@
-# main.py - Amazon Affiliate Blogger Bot - Fixed Version
-# Complete deployment-ready version with error handling improvements
+# main.py - Amazon Affiliate Blogger Bot - Authentication Fixed Version
+# Complete deployment-ready version with proper OAuth token handling
 
 import os
 import time
@@ -55,14 +55,15 @@ class AmazonAffiliateBlogBot:
         self.bitly_token = "84e3fa55424e93055b030a86cf3a17c2bb8865c0"
         self.amazon_tag = "topamazonpi06-20"
         
-        # Get refresh token from environment variable
+        # Get OAuth credentials from environment variables
         self.refresh_token = os.getenv('GOOGLE_OAUTH_TOKEN')
-        self.access_token = None
-        self.token_expires_at = 0
-        
-        # OAuth credentials for token refresh
         self.client_id = os.getenv('GOOGLE_CLIENT_ID', '')
         self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET', '')
+        
+        # Token management
+        self.access_token = None
+        self.token_expires_at = 0
+        self.token_type = None  # Will be 'access' or 'refresh'
         
         # Initialize posted products tracking set
         self.posted_products = set()
@@ -88,6 +89,35 @@ class AmazonAffiliateBlogBot:
         self.max_retries = 3
         self.retry_delay = 5  # seconds
         
+        # Determine token type on initialization
+        self._analyze_token_type()
+        
+    def _analyze_token_type(self):
+        """Analyze and determine the type of token we have"""
+        if not self.refresh_token:
+            logger.error("❌ No authentication token found in environment variables")
+            return
+            
+        if self.refresh_token.startswith('ya29.'):
+            self.token_type = 'access'
+            self.access_token = self.refresh_token
+            # Assume it expires in 1 hour (3600 seconds) minus 5 minutes buffer
+            self.token_expires_at = time.time() + 3300
+            logger.info("✅ Detected access token (ya29.)")
+        elif self.refresh_token.startswith('1//'):
+            self.token_type = 'refresh'
+            logger.info("✅ Detected refresh token (1//)")
+        else:
+            # Try to determine by length and content
+            if len(self.refresh_token) > 100 and '.' in self.refresh_token:
+                self.token_type = 'access'
+                self.access_token = self.refresh_token
+                self.token_expires_at = time.time() + 3300
+                logger.info("✅ Assuming access token based on format")
+            else:
+                self.token_type = 'refresh'
+                logger.info("✅ Assuming refresh token based on format")
+        
     def setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
         def signal_handler(signum, frame):
@@ -107,172 +137,157 @@ class AmazonAffiliateBlogBot:
         logger.info(f"GOOGLE_CLIENT_SECRET present: {'✅' if self.client_secret else '❌'}")
         
         if self.refresh_token:
-            logger.info(f"Token starts with: {self.refresh_token[:10]}...")
+            logger.info(f"Token type: {self.token_type}")
             logger.info(f"Token length: {len(self.refresh_token)}")
+            logger.info(f"Token starts with: {self.refresh_token[:15]}...")
             
-            # Enhanced token format detection
-            if self.refresh_token.startswith('ya29.'):
-                logger.info("✅ Token appears to be an access token (ya29.)")
-                logger.info("💡 This will be used directly for API calls")
-            elif self.refresh_token.startswith('1//'):
-                logger.info("✅ Token appears to be a refresh token (1//)")
-                if self.client_id and self.client_secret:
-                    logger.info("✅ Client credentials available for token refresh")
-                else:
-                    logger.warning("⚠️ Refresh token detected but missing client credentials")
-                    logger.info("💡 Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET for automatic refresh")
-            else:
-                logger.warning("⚠️ Unusual token format - will attempt multiple authentication methods")
-                
-            # Test token validity immediately
-            logger.info("🧪 Testing token validity...")
-            test_token = self.get_access_token()
-            if test_token:
-                logger.info("✅ Token validation successful")
-            else:
-                logger.error("❌ Token validation failed")
-        else:
-            logger.error("❌ No authentication token found")
-            logger.info("💡 Please set GOOGLE_OAUTH_TOKEN environment variable")
+            if self.token_type == 'refresh' and not (self.client_id and self.client_secret):
+                logger.warning("⚠️ Refresh token detected but missing client credentials")
+                logger.info("💡 For refresh tokens, set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
+                logger.info("💡 Alternatively, use a fresh access token instead")
         
         return True
 
-    def test_blogger_access(self):
-        """Test if we can access Blogger API with retry logic"""
-        for attempt in range(self.max_retries):
-            try:
-                access_token = self.get_access_token()
-                if not access_token:
-                    logger.error("❌ No access token available for testing")
-                    return False
-                
-                headers = {
-                    'Authorization': f'Bearer {access_token}',
-                    'User-Agent': 'Amazon-Affiliate-Bot/1.0'
-                }
-                
-                # Test with blog info endpoint (read-only)
-                url = f"https://www.googleapis.com/blogger/v3/blogs/{self.blogger_id}"
-                response = requests.get(url, headers=headers, timeout=15)
-                
-                if response.status_code == 200:
-                    blog_data = response.json()
-                    logger.info(f"✅ Blogger API access confirmed for: {blog_data.get('name', 'Unknown Blog')}")
-                    return True
-                elif response.status_code == 401:
-                    logger.warning(f"⚠️ Authentication failed (attempt {attempt + 1}/{self.max_retries})")
-                    logger.error(f"Response details: {response.text}")
-                    self.access_token = None  # Force token refresh
-                    if attempt < self.max_retries - 1:
-                        time.sleep(self.retry_delay)
-                        continue
-                else:
-                    logger.error(f"❌ Blogger API test failed: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
-                    return False
-                    
-            except requests.exceptions.RequestException as e:
-                logger.error(f"❌ Network error during Blogger API test (attempt {attempt + 1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
-                    continue
-            except Exception as e:
-                logger.error(f"❌ Unexpected error during Blogger API test: {e}")
-                return False
-        
-        logger.error("❌ All Blogger API test attempts failed")
-        return False
-        
     def get_access_token(self):
-        """Get valid access token, refresh if needed - Fixed with proper OAuth flow"""
+        """Get valid access token with improved handling for both token types"""
         try:
             current_time = time.time()
             
-            # If token is still valid (with 5-minute buffer), return it
-            if self.access_token and current_time < (self.token_expires_at - 300):
+            # If we have a valid access token that hasn't expired, use it
+            if (self.access_token and 
+                current_time < (self.token_expires_at - 300) and  # 5-minute buffer
+                self.token_type == 'access'):
                 return self.access_token
             
-            logger.info("🔄 Refreshing access token...")
+            # If we have a refresh token, try to get a new access token
+            if self.token_type == 'refresh':
+                logger.info("🔄 Refreshing access token using refresh token...")
+                return self._refresh_access_token()
             
-            # Enhanced OAuth token refresh with automatic retry
-            if self.refresh_token:
-                # Handle both refresh tokens and access tokens
-                if self.refresh_token.startswith('1//') and self.client_id and self.client_secret:
-                    # This is a refresh token - use proper OAuth flow
-                    for retry in range(3):
-                        try:
-                            headers = {
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                                'User-Agent': 'Amazon-Affiliate-Bot/1.0'
-                            }
-                            data = {
-                                'client_id': self.client_id,
-                                'client_secret': self.client_secret,
-                                'refresh_token': self.refresh_token,
-                                'grant_type': 'refresh_token'
-                            }
-                            
-                            response = requests.post('https://oauth2.googleapis.com/token', 
-                                                   headers=headers, data=data, timeout=20)
-                            
-                            if response.status_code == 200:
-                                token_data = response.json()
-                                if 'access_token' in token_data:
-                                    self.access_token = token_data['access_token']
-                                    expires_in = token_data.get('expires_in', 3600)
-                                    self.token_expires_at = current_time + expires_in
-                                    logger.info("✅ Access token refreshed successfully via OAuth")
-                                    return self.access_token
-                            else:
-                                logger.warning(f"⚠️ OAuth refresh attempt {retry + 1} failed: {response.status_code}")
-                                if retry < 2:
-                                    time.sleep(2)
-                                    continue
-                        except Exception as e:
-                            logger.warning(f"⚠️ OAuth refresh error (attempt {retry + 1}): {e}")
-                            if retry < 2:
-                                time.sleep(2)
-                                continue
-                
-                elif self.refresh_token.startswith('ya29.'):
-                    # This is already an access token
-                    logger.info("✅ Using provided access token directly")
-                    self.access_token = self.refresh_token
-                    self.token_expires_at = current_time + 3600
+            # If we have an access token but it might be expired, try to use it anyway
+            # (sometimes tokens work longer than expected)
+            elif self.token_type == 'access':
+                if current_time < (self.token_expires_at + 300):  # Try for 5 minutes past expiry
+                    logger.info("🔄 Using potentially expired access token...")
                     return self.access_token
-                
                 else:
-                    # Try as refresh token without client credentials (some OAuth flows)
-                    try:
-                        headers = {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'User-Agent': 'Amazon-Affiliate-Bot/1.0'
-                        }
-                        data = {
-                            'refresh_token': self.refresh_token,
-                            'grant_type': 'refresh_token'
-                        }
-                        
-                        response = requests.post('https://oauth2.googleapis.com/token', 
-                                               headers=headers, data=data, timeout=15)
-                        
-                        if response.status_code == 200:
-                            token_data = response.json()
-                            if 'access_token' in token_data:
-                                self.access_token = token_data['access_token']
-                                expires_in = token_data.get('expires_in', 3600)
-                                self.token_expires_at = current_time + expires_in
-                                logger.info("✅ Access token refreshed without client credentials")
-                                return self.access_token
-                    except Exception as e:
-                        logger.warning(f"⚠️ Alternative refresh method failed: {e}")
+                    logger.error("❌ Access token is too old and cannot be refreshed without refresh token")
+                    logger.info("💡 Please provide a fresh access token or use a refresh token with client credentials")
+                    return None
             
-            logger.error("❌ All token refresh methods failed")
+            logger.error("❌ No valid authentication method available")
             return None
             
         except Exception as e:
             logger.error(f"❌ Critical error in get_access_token: {e}")
             return None
+
+    def _refresh_access_token(self):
+        """Refresh access token using refresh token"""
+        if not self.client_id or not self.client_secret:
+            logger.error("❌ Cannot refresh token: missing client credentials")
+            logger.info("💡 Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables")
+            return None
+        
+        for retry in range(3):
+            try:
+                headers = {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': 'Amazon-Affiliate-Bot/1.0'
+                }
+                
+                data = {
+                    'client_id': self.client_id,
+                    'client_secret': self.client_secret,
+                    'refresh_token': self.refresh_token,
+                    'grant_type': 'refresh_token'
+                }
+                
+                logger.info(f"🔄 Attempting token refresh (attempt {retry + 1}/3)...")
+                response = requests.post('https://oauth2.googleapis.com/token', 
+                                       headers=headers, data=data, timeout=20)
+                
+                if response.status_code == 200:
+                    token_data = response.json()
+                    if 'access_token' in token_data:
+                        self.access_token = token_data['access_token']
+                        expires_in = token_data.get('expires_in', 3600)
+                        self.token_expires_at = time.time() + expires_in
+                        logger.info("✅ Access token refreshed successfully")
+                        return self.access_token
+                    else:
+                        logger.error("❌ No access_token in refresh response")
+                        return None
+                else:
+                    logger.error(f"❌ Token refresh failed: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    if response.status_code == 400:
+                        # Bad request usually means invalid refresh token
+                        logger.error("❌ Invalid refresh token or client credentials")
+                        return None
+                    
+                    if retry < 2:
+                        time.sleep(2)
+                        continue
+                        
+            except Exception as e:
+                logger.error(f"❌ Token refresh error (attempt {retry + 1}): {e}")
+                if retry < 2:
+                    time.sleep(2)
+                    continue
+        
+        return None
+
+    def test_blogger_access(self):
+        """Test if we can access Blogger API with improved error handling"""
+        logger.info("🧪 Testing Blogger API access...")
+        
+        access_token = self.get_access_token()
+        if not access_token:
+            logger.error("❌ No access token available for testing")
+            return False
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'User-Agent': 'Amazon-Affiliate-Bot/1.0'
+        }
+        
+        # Test with blog info endpoint (read-only)
+        url = f"https://www.googleapis.com/blogger/v3/blogs/{self.blogger_id}"
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            
+            if response.status_code == 200:
+                blog_data = response.json()
+                logger.info(f"✅ Blogger API access confirmed for: {blog_data.get('name', 'Unknown Blog')}")
+                return True
+            elif response.status_code == 401:
+                logger.error("❌ Authentication failed - token is invalid or expired")
+                logger.error(f"Response: {response.text}")
+                
+                # If this is an access token, it might be expired
+                if self.token_type == 'access':
+                    logger.info("💡 Access token might be expired. Try getting a fresh one.")
+                elif self.token_type == 'refresh':
+                    logger.info("💡 Refresh token might be invalid. Check your client credentials.")
+                
+                return False
+            elif response.status_code == 403:
+                logger.error("❌ Permission denied - check blog ID and API permissions")
+                logger.error(f"Response: {response.text}")
+                return False
+            else:
+                logger.error(f"❌ Blogger API test failed: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Network error during Blogger API test: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Unexpected error during Blogger API test: {e}")
+            return False
 
     def keep_alive(self):
         """Ping endpoint every 14 minutes to prevent Render sleep"""
@@ -456,7 +471,10 @@ Write an SEO-optimized review including:
 
 Keep it 600-800 words, natural and trustworthy tone.
 
-Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"""
+Return ONLY valid JSON in this exact format:
+{{"title": "Review title here", "meta_description": "Description here", "content": "Full HTML content here"}}
+
+No extra text, no code blocks, no markdown - just pure JSON."""
                 
                 # Enhanced payload with better safety settings
                 payload = {
@@ -487,21 +505,26 @@ Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"
                     if 'candidates' in result and len(result['candidates']) > 0:
                         candidate = result['candidates'][0]
                         if 'content' in candidate and 'parts' in candidate['content']:
-                            content = candidate['content']['parts'][0]['text']
+                            content = candidate['content']['parts'][0]['text'].strip()
                             
-                            # Enhanced JSON extraction
+                            # Enhanced JSON extraction and cleaning
                             try:
-                                # Clean up the content first
+                                # Remove code blocks and markdown
+                                content = re.sub(r'```json\s*', '', content)
+                                content = re.sub(r'```\s*', '', content)
                                 content = content.strip()
-                                # Find JSON boundaries more reliably
+                                
+                                # Find JSON boundaries
                                 json_start = content.find('{')
                                 json_end = content.rfind('}') + 1
                                 
                                 if json_start >= 0 and json_end > json_start:
                                     json_content = content[json_start:json_end]
-                                    # Clean up common JSON formatting issues
-                                    json_content = re.sub(r'```json\s*', '', json_content)
-                                    json_content = re.sub(r'```\s*', '', json_content)
+                                    
+                                    # Clean control characters that cause JSON parsing issues
+                                    json_content = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_content)
+                                    json_content = json_content.replace('\n', ' ').replace('\r', ' ')
+                                    json_content = re.sub(r'\s+', ' ', json_content)
                                     
                                     content_data = json.loads(json_content)
                                     
@@ -514,6 +537,7 @@ Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"
                                         
                             except json.JSONDecodeError as e:
                                 logger.warning(f"⚠️ Failed to parse AI JSON: {e}")
+                                logger.debug(f"Raw content: {content[:200]}...")
                             
                             # Fallback with cleaned AI content
                             logger.info("📝 Using AI content with fallback formatting")
@@ -638,13 +662,18 @@ Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"
         }
 
     def post_to_blogger(self, title, content, meta_description, affiliate_link):
-        """Post content to Blogger using API with retry logic"""
+        """Post content to Blogger using API with improved authentication retry"""
         for attempt in range(self.max_retries):
             try:
+                # Get fresh access token for each attempt
                 access_token = self.get_access_token()
                 
                 if not access_token:
-                    logger.error("❌ No valid access token available")
+                    logger.error("❌ No valid access token available for posting")
+                    if self.token_type == 'access':
+                        logger.error("💡 Your access token may have expired. Please get a fresh one.")
+                    elif self.token_type == 'refresh':
+                        logger.error("💡 Unable to refresh token. Check your client credentials.")
                     return False
                     
                 headers = {
@@ -724,6 +753,8 @@ Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"
                 
                 # Post to Blogger
                 url = f"https://www.googleapis.com/blogger/v3/blogs/{self.blogger_id}/posts"
+                logger.info(f"🔄 Posting to Blogger (attempt {attempt + 1}/{self.max_retries})...")
+                
                 response = requests.post(url, headers=headers, json=post_data, timeout=30)
                 
                 if response.status_code == 200:
@@ -733,10 +764,26 @@ Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"
                     return True
                 elif response.status_code == 401:
                     logger.warning(f"⚠️ Authentication failed (attempt {attempt + 1}/{self.max_retries})")
-                    self.access_token = None  # Force token refresh
+                    logger.error(f"Response: {response.text}")
+                    
+                    # Clear access token to force refresh on next attempt
+                    self.access_token = None
+                    
+                    # If this is an access token, it's likely expired
+                    if self.token_type == 'access':
+                        logger.error("❌ Access token appears to be expired or invalid")
+                        logger.info("💡 Please provide a fresh access token")
+                        return False  # Don't retry with expired access token
+                    
+                    # For refresh tokens, try again
                     if attempt < self.max_retries - 1:
                         time.sleep(self.retry_delay)
                         continue
+                elif response.status_code == 403:
+                    logger.error(f"❌ Permission denied: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    logger.error("💡 Check if your token has the required Blogger API permissions")
+                    return False  # Don't retry permission errors
                 else:
                     logger.error(f"❌ Blogger API error: {response.status_code}")
                     logger.error(f"Response: {response.text}")
@@ -865,14 +912,21 @@ Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"
             logger.error("❌ GOOGLE_OAUTH_TOKEN environment variable not set!")
             logger.error("Please set your token in Render environment variables")
             logger.error("The bot will continue but posting will fail without proper authentication")
+            return False
+        
+        # Test Blogger access
+        logger.info("🧪 Testing Blogger API access...")
+        if self.test_blogger_access():
+            logger.info("✅ Authentication working correctly - ready to post!")
         else:
-            # Test Blogger access
-            logger.info("🧪 Testing Blogger API access...")
-            if self.test_blogger_access():
-                logger.info("✅ Authentication appears to be working correctly")
-            else:
-                logger.warning("⚠️ Authentication test failed - will try again during posting")
-                logger.info("💡 Note: Sometimes the test fails but actual posting works")
+            logger.error("❌ Authentication test failed - please check your token")
+            if self.token_type == 'access':
+                logger.error("💡 Tip: Make sure you're using an ACCESS TOKEN starting with 'ya29.'")
+                logger.error("💡 Access tokens expire - you may need a fresh one")
+            elif self.token_type == 'refresh':
+                logger.error("💡 Tip: Check your GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
+                logger.error("💡 Refresh tokens require proper client credentials")
+            return False
         
         # Start keep-alive thread
         keep_alive_thread = Thread(target=self.keep_alive, daemon=True)
