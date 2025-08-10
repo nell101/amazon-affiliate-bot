@@ -1,5 +1,5 @@
 # main.py - Amazon Affiliate Blogger Bot - Supercharged Version
-# Complete deployment-ready version with proper OAuth token handling and new feature
+# Complete deployment-ready version with proper OAuth token handling and new features
 
 import os
 import time
