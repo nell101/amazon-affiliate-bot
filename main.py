@@ -758,7 +758,10 @@ Return ONLY valid JSON in this exact format. DO NOT include any other text or ma
                     'labels': ['amazon', 'affiliate', 'review', 'deals', '2024', product['title'].split(' ')[-1].lower(), 'shopping']
                 }
                 
-                url = f"[https://www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){self.blogger_id}/posts"
+                # Sanitize the blogger ID to ensure it's a clean string
+                sanitized_blogger_id = "".join(filter(str.isdigit, self.blogger_id))
+                url = f"[https://www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){sanitized_blogger_id}/posts"
+                
                 logger.info(f"🔄 Posting to Blogger (attempt {attempt + 1}/{self.max_retries})...")
                 
                 response = requests.post(url, headers=headers, json=post_data, timeout=30)
