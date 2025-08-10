@@ -1,21 +1,3 @@
-def shorten_url(self, long_url):
-        """Shorten URL using Bitly with retry logic - with quota handling"""
-        for attempt in range(self.max_retries):
-            try:
-                headers = {
-                    'Authorization': f'Bearer {self.bitly_token}',
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'Amazon-Affiliate-Bot/1.0'
-                }
-                
-                data = {
-                    'long_url': long_url,
-                    'domain': 'bit.ly'
-                }
-                
-                response = requests.post('https://api-ssl.bitly.com/v4/shorten',
-                                       headers=headers, json=data, timeout=15)
-
 # main.py - Amazon Affiliate Blogger Bot - Fixed Version
 # Complete deployment-ready version with error handling improvements
 
