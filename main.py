@@ -1,4 +1,19 @@
-# main.py - Amazon Affiliate Blogger Bot - Fixed Version
+def shorten_url(self, long_url):
+        """Shorten URL using Bitly with retry logic - with quota handling"""
+        for attempt in range(self.max_retries):
+            try:
+                headers = {
+                    'Authorization': f'Bearer {self.bitly_token}',
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Amazon-Affiliate-Bot/1.0'
+                }
+                
+                data = {
+                    'long_url': long_url,
+                    'domain': 'bit.ly'
+                }
+                
+                response = requests.post('https://api-ssl.bitly.com/v4/shorten# main.py - Amazon Affiliate Blogger Bot - Fixed Version
 # Complete deployment-ready version with error handling improvements
 
 import os
@@ -387,7 +402,7 @@ class AmazonAffiliateBlogBot:
         return affiliate_url
 
     def shorten_url(self, long_url):
-        """Shorten URL using Bitly with retry logic"""
+        """Shorten URL using Bitly with retry logic - handles quota limits"""
         for attempt in range(self.max_retries):
             try:
                 headers = {
@@ -408,6 +423,9 @@ class AmazonAffiliateBlogBot:
                     short_url = response.json()['link']
                     logger.info(f"✅ URL shortened: {short_url}")
                     return short_url
+                elif response.status_code == 429:
+                    logger.warning("⚠️ Bitly quota reached - using original URL")
+                    return long_url  # Return original URL when quota exceeded
                 else:
                     logger.warning(f"⚠️ Bitly API response: {response.status_code} - {response.text}")
                     if attempt < self.max_retries - 1:
@@ -430,8 +448,8 @@ class AmazonAffiliateBlogBot:
         """Generate SEO-optimized content using Google Gemini with enhanced error handling"""
         for attempt in range(self.max_retries):
             try:
-                # Enhanced Gemini API URL with better parameters
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={self.gemini_api_key}"
+                # Working Gemini API URL with stable model
+                url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={self.gemini_api_key}"
                 
                 headers = {
                     'Content-Type': 'application/json',
