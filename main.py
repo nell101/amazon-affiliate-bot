@@ -57,8 +57,8 @@ class AmazonAffiliateBlogBot:
         
         # Get OAuth credentials from environment variables
         self.refresh_token = os.getenv('GOOGLE_OAUTH_TOKEN')
-        self.client_id = os.getenv('GOOGLE_CLIENT_ID', '')
-        self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET', '')
+        self.client_id = os.getenv('GOOGLE_CLIENT_ID')  # Correctly get the client ID
+        self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET')  # Correctly get the client secret
         
         # Token management
         self.access_token = None
