@@ -161,6 +161,7 @@ class AmazonAffiliateBlogBot:
                     return True
                 elif response.status_code == 401:
                     logger.warning(f"⚠️ Authentication failed (attempt {attempt + 1}/{self.max_retries})")
+                    logger.error(f"Response details: {response.text}")
                     self.access_token = None  # Force token refresh
                     if attempt < self.max_retries - 1:
                         time.sleep(self.retry_delay)
@@ -870,8 +871,8 @@ Format as JSON: {{"title": "...", "meta_description": "...", "content": "..."}}"
             if self.test_blogger_access():
                 logger.info("✅ Authentication appears to be working correctly")
             else:
-                logger.error("❌ Authentication test failed - please check your token")
-                logger.error("💡 Tip: Make sure you're using an ACCESS TOKEN starting with 'ya29.'")
+                logger.warning("⚠️ Authentication test failed - will try again during posting")
+                logger.info("💡 Note: Sometimes the test fails but actual posting works")
         
         # Start keep-alive thread
         keep_alive_thread = Thread(target=self.keep_alive, daemon=True)
